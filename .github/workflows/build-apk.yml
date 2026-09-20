@@ -1,0 +1,79 @@
+name: Build Android APK
+
+on: [push, workflow_dispatch]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build release APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter (stable channel)
+        # Pin a specific version with `flutter-version:` when reproducibility
+        # is needed. Stable channel currently provides Dart >= 3.10.
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Show Flutter version
+        run: flutter --version
+
+      - name: Generate Android platform files
+        # Existing files (pubspec.yaml, lib/, test/) are preserved; only the
+        # missing android/ platform folder is created.
+        run: flutter create --platforms=android --project-name=vakil --org com.example .
+
+      - name: Configure the Android manifest
+        run: |
+          python3 - <<'EOF'
+          from pathlib import Path
+
+          manifest_path = Path("android/app/src/main/AndroidManifest.xml")
+          manifest = manifest_path.read_text(encoding="utf-8")
+
+          if "android.permission.INTERNET" not in manifest:
+              manifest = manifest.replace(
+                  "<application",
+                  '<uses-permission android:name="android.permission.INTERNET" />\n    <application',
+                  1,
+              )
+
+          manifest = manifest.replace('android:label="vakil"', 'android:label="وکیل"')
+          if 'android:label="وکیل"' not in manifest:
+              raise SystemExit("Could not set the Persian application label in the manifest.")
+
+          manifest_path.write_text(manifest, encoding="utf-8")
+          print("Android manifest configured successfully.")
+          EOF
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze code
+        run: flutter analyze
+
+      - name: Run tests
+        run: flutter test
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vakil-release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
